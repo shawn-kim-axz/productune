@@ -1,1 +1,1 @@
-/Users/shawn.axz-pc/Documents/dev/ntf-products/productune/packages/core/agents/variants/graphiti/pdt-qa.md
+variants/graphiti/pdt-qa.md
