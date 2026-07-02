@@ -70,6 +70,33 @@ set +e
 EVENT_JSON="$(cat 2>/dev/null || true)"
 [ -z "$EVENT_JSON" ] && exit 0
 
+# ── PROJECT SCOPE (2026-07-02, prdt coexistence fix) ─────────────────────────
+# This lint enforces FULL productune's ticket schema, so it must fire ONLY inside
+# a productune project (walk-up from the event cwd for a `.productune/` marker).
+# Other systems (prdt, plain repos) own their own docs/tickets schemas — prdt
+# validates via index-time CHECK + doctor. No marker found → PASS (cardinal rule:
+# ambiguous → PASS). Behavior INSIDE productune projects is byte-identical.
+SCOPE_DIR="$(python3 -c "
+import json, sys
+try:
+    print(json.loads(sys.stdin.read()).get('cwd', ''))
+except Exception:
+    print('')
+" 2>/dev/null <<< "$EVENT_JSON")"
+[ -z "$SCOPE_DIR" ] && SCOPE_DIR="$PWD"
+IN_PRODUCTUNE=0
+while [ -n "$SCOPE_DIR" ] && [ "$SCOPE_DIR" != "/" ] && [ "$SCOPE_DIR" != "$HOME" ]; do
+  # PROJECT marker = .productune/ holding project state (po-state.json|config.json)
+  # — matches the GUI/statusline detection; ~/.productune (the INSTALL home:
+  # doctrine mirror + productune.env, no project state) must NOT match, so the
+  # walk also stops before $HOME.
+  if [ -f "$SCOPE_DIR/.productune/po-state.json" ] || [ -f "$SCOPE_DIR/.productune/config.json" ]; then
+    IN_PRODUCTUNE=1; break
+  fi
+  SCOPE_DIR="$(dirname "$SCOPE_DIR")"
+done
+[ "$IN_PRODUCTUNE" = "1" ] || exit 0
+
 # ── Extract a tool_input field ────────────────────────────────────────────────
 read_json() {
   python3 -c "
