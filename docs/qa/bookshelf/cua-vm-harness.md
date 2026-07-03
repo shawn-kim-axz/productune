@@ -83,6 +83,20 @@ T-PATCH-230 / 221 / 231 hunts). Always confirm fresh keychain auth before blamin
 - To deliberately reproduce a **401** (T-231 verify): remove/expire the keychain creds, then run a
   PO turn → health-smoke should classify `auth` and surface the actionable banner.
 
+## 4b. ssh 비대화형 세션의 keychain 잠금 (헤드리스 PO 검증 시)
+
+`lume ssh cua '<cmd>'` 로 헤드리스 claude를 돌리면, keychain에 유효 토큰이 있어도
+`Not logged in`으로 죽는다 — ssh 세션은 GUI login 세션과 분리돼 login keychain이 잠긴
+채이기 때문 (§4의 stale-token 401과는 다른 원인). 명령 앞에서 언락하면 해결:
+
+```sh
+lume ssh cua 'security unlock-keychain -p lume ~/Library/Keychains/login.keychain-db; \
+  export PATH="$HOME/.local/bin:$PATH"; echo "..." | claude -p --agent prdt-po ...'
+```
+
+lume 게스트의 login keychain 비번 = 기본 `lume`. VNC(GUI) 세션 터미널이나 GUI 앱
+spawn 경로에서는 이미 열려 있어 불필요. (prdt migration 헤드리스 검증 2026-07-03.)
+
 ## 5. Re-triggering the app-level onboarding wizard (T-220)
 
 The engine-login wizard (`App.tsx`) shows only when `~/.productune/productune.env` is missing
