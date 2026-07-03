@@ -825,22 +825,22 @@ fi
 # (백업 → 단계별 검증 → 실패 시 자동 롤백 + 대안 안내). 거절: 플래그 기록 후 침묵.
 # 로직은 전부 v1 쪽 flip 스크립트에 있고 여기는 부트스트랩만 — v1 갱신이 자동 반영된다.
 if [ -t 0 ] && [ ! -x "$HOME/.prdt/bin/prdt" ] && [ ! -f "$HOME/.productune/.prdt-handoff-declined" ]; then
-  printf '\n★ productune은 차세대 prdt(v1)로 대체되고 있어요.\n'
-  printf '  지금 이 기기를 전환할까요? 백업 후 진행되고, 실패하면 자동 롤백돼요. [Y/n] '
+  printf '\nâ productuneì ì°¨ì¸ë prdt(v1)ë¡ ëì²´ëê³  ìì´ì.\n'
+  printf '  ì§ê¸ ì´ ê¸°ê¸°ë¥¼ ì íí ê¹ì? ë°±ì í ì§íëê³ , ì¤í¨íë©´ ìë ë¡¤ë°±ë¼ì. [Y/n] '
   IFS= read -r _PH_ANS || _PH_ANS="n"
   case "$_PH_ANS" in
     [nN]*)
       mkdir -p "$HOME/.productune" 2>/dev/null || true
       : > "$HOME/.productune/.prdt-handoff-declined" 2>/dev/null || true
-      say "알겠어요 — productune을 계속 사용합니다. 나중에 전환: rm ~/.productune/.prdt-handoff-declined 후 재실행"
+      say "ìê² ì´ì â productuneì ê³ì ì¬ì©í©ëë¤. ëì¤ì ì í: rm ~/.productune/.prdt-handoff-declined í ì¬ì¤í"
       ;;
     *)
       _PH_SELF="$(realpath "$0" 2>/dev/null || echo "$0")"
       _PH_REPO="$(cd "$(dirname "$_PH_SELF")/../../.." 2>/dev/null && pwd || true)"
       if [ -z "$_PH_REPO" ] || [ ! -d "$_PH_REPO/.git" ]; then
-        warn "productune repo를 찾지 못해 전환을 건너뜁니다 (수동: v1 브랜치 docs/prdt-v1-flip.md)"
+        warn "productune repoë¥¼ ì°¾ì§ ëª»í´ ì íì ê±´ëëëë¤ (ìë: v1 ë¸ëì¹ docs/prdt-v1-flip.md)"
       elif ! git -C "$_PH_REPO" fetch origin v1 2>/dev/null; then
-        warn "v1 fetch 실패(네트워크/권한) — 이번엔 건너뛰고 다음 실행 때 다시 제안할게요."
+        warn "v1 fetch ì¤í¨(ë¤í¸ìí¬/ê¶í) â ì´ë²ì ê±´ëë°ê³  ë¤ì ì¤í ë ë¤ì ì ìí ê²ì."
       else
         _PH_WT="$HOME/.prdt/repo"
         mkdir -p "$HOME/.prdt" 2>/dev/null || true
@@ -850,16 +850,16 @@ if [ -t 0 ] && [ ! -x "$HOME/.prdt/bin/prdt" ] && [ ! -f "$HOME/.productune/.prd
         else
           git -C "$_PH_REPO" worktree add --track -B prdt-v1 "$_PH_WT" origin/v1 2>/dev/null \
             || git clone --branch v1 --single-branch "$(git -C "$_PH_REPO" remote get-url origin)" "$_PH_WT" 2>/dev/null \
-            || { warn "worktree/clone 생성 실패 — 수동 전환: docs/prdt-v1-flip.md"; _PH_WT=""; }
+            || { warn "worktree/clone ìì± ì¤í¨ â ìë ì í: docs/prdt-v1-flip.md"; _PH_WT=""; }
         fi
         if [ -n "$_PH_WT" ] && [ -f "$_PH_WT/packages/core/scripts/prdt-flip.sh" ]; then
           if bash "$_PH_WT/packages/core/scripts/prdt-flip.sh"; then
             say ""
-            say "전환 완료 — 이제 'prdt'(신규 프로젝트) / 'prdt migrate'(기존 프로젝트 전환)를 쓰세요."
+            say "ì í ìë£ â ì´ì  'prdt'(ì ê·) / 'prdt migrate'(ê¸°ì¡´ íë¡ì í¸ ì í)ë¥¼ ì°ì¸ì."
             exit 0
           else
-            warn "전환 실패 — flip이 자동 롤백했으므로 productune은 그대로 사용 가능합니다."
-            warn "재시도: productune 재실행 · 수동: $_PH_WT/docs/prdt-v1-flip.md"
+            warn "ì í ì¤í¨ â flipì´ ìë ë¡¤ë°±íì¼ë¯ë¡ productuneì ê·¸ëë¡ ì¬ì© ê°ë¥í©ëë¤."
+            warn "ì¬ìë: productune ì¬ì¤í Â· ìë: $_PH_WT/docs/prdt-v1-flip.md"
           fi
         fi
       fi
