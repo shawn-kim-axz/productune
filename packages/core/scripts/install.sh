@@ -1,179 +1,56 @@
 #!/usr/bin/env bash
-# prdt v1 install — mirror discipline to ~/.prdt (1-way), register agents + hook 5종.
-# (Canonical name since T-293: was prdt-install.sh during pdt-* coexistence;
-#  a thin prdt-install.sh forwarder remains for older installed `prdt update` copies.)
-# Statusline (T-330): default-on when nothing is registered yet (fresh install, or
-# after legacy-statusline cleanup) — a fresh install without --statusline used to
-# leave the user with no statusline at all. Any EXISTING statusLine (ours or a
-# custom one) is left untouched to avoid clobbering it; pass --statusline to force
-# re-registration, or --no-statusline to opt out on a fresh install.
+# ══════════════════════════════════════════════════════════════════════════════
+# 저장소 이전 마이그레이션 심 (T-431, 2026-07-29)
 #
-# Usage: install.sh [--statusline|--no-statusline]
+# 이 저장소(shawn-kim-axz/productune)는 2026-07-20에 동결되었어요 — 코드는
+# https://github.com/shawn-kim-axz/productune-code 로 이전되었습니다.
+#
+# 이 파일은 아직 이 저장소를 origin으로 갖고 있는 기기를 위한 1회성 심입니다.
+# `prdt update`가 (pull 후) 이 스크립트를 실행하는 것이 그런 기기에 닿는 유일한
+# 채널이라, 진짜 설치 로직 대신 다음을 수행합니다:
+#   1. 이전 안내 출력
+#   2. 새 저장소를 fetch로 검증한 뒤 origin을 productune-code로 재설정
+#   3. 이 클론을 새 저장소 HEAD로 전환 (checkout -B — cmd_update가 실행 전에
+#      더티 체크를 이미 통과시켰으므로 안전)
+#   4. 전환된 트리의 진짜 install.sh로 exec 위임 (이 파일은 그 시점에 새
+#      내용으로 대체되어 있음 — 그래서 3~4단계는 `exec bash -c` 래퍼 안에서
+#      실행: 셸이 이 파일을 더 읽지 않아 자기-덮어쓰기가 안전)
+#
+# 이후의 `prdt update`는 평소처럼 productune-code에서 pull --ff-only 하면 됩니다.
+# (PRDT_NEW_ORIGIN 환경변수는 테스트 시뮬레이션용 오버라이드입니다.)
+# ══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-STATUSLINE_MODE="auto"
-for arg in "$@"; do
-  case "$arg" in
-    --statusline) STATUSLINE_MODE="on" ;;
-    --no-statusline) STATUSLINE_MODE="off" ;;
-  esac
-done
+NEW_URL="${PRDT_NEW_ORIGIN:-https://github.com/shawn-kim-axz/productune-code.git}"
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"   # <clone root> (this file: packages/core/scripts/)
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"   # packages/core
-PRDT_HOME="${PRDT_HOME:-$HOME/.prdt}"
-CLAUDE_DIR="${CLAUDE_DIR:-$HOME/.claude}"
-say() { printf '%s\n' "$*"; }
+echo "════════════════════════════════════════════════════════════════"
+echo "  productune 저장소 이전 안내"
+echo "  이 저장소(shawn-kim-axz/productune)는 2026-07-20에 동결되었어요."
+echo "  코드는 productune-code 로 이전되었습니다:"
+echo "    $NEW_URL"
+echo "  origin을 자동으로 재설정하고 최신 코드로 전환할게요."
+echo "════════════════════════════════════════════════════════════════"
 
-command -v jq >/dev/null 2>&1 || { echo "prdt-install: jq is required" >&2; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo "prdt-install: python3 is required" >&2; exit 1; }
+# 현재 브랜치 (detached면 main으로)
+BRANCH="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+[ "$BRANCH" = "HEAD" ] && BRANCH="main"
 
-# 1. mirror (1-way: repo → home; user files live in overrides/, never in the mirror)
-say "1) Mirroring discipline → $PRDT_HOME"
-mkdir -p "$PRDT_HOME/overrides" "$PRDT_HOME/hooks" "$PRDT_HOME/bin"
-rm -rf "$PRDT_HOME/discipline"
-cp -R "$ROOT/discipline" "$PRDT_HOME/discipline"
-cp "$ROOT/doctrine.md" "$PRDT_HOME/doctrine.md"
-cp "$ROOT/scripts/hooks/prdt-session-start.sh" "$ROOT/scripts/hooks/prdt-post-compact.sh" \
-   "$ROOT/scripts/hooks/prdt-post-dispatch.sh" "$ROOT/scripts/hooks/prdt-user-prompt.sh" \
-   "$ROOT/scripts/hooks/prdt-overrides-inject.sh" \
-   "$PRDT_HOME/hooks/"
-cp "$ROOT/scripts/prdt" "$PRDT_HOME/bin/prdt"
-cp "$ROOT/scripts/statusline-prdt.sh" "$PRDT_HOME/bin/statusline-prdt.sh"
-chmod +x "$PRDT_HOME/hooks/"*.sh "$PRDT_HOME/bin/prdt" "$PRDT_HOME/bin/statusline-prdt.sh"
-
-# menus are derived — regenerate against the installed mirror
-PRDT_DISCIPLINE="$PRDT_HOME/discipline" "$PRDT_HOME/bin/prdt" menus >/dev/null
-say "   mirrored (discipline + doctrine + hooks + bin, menus regenerated)"
-
-# 2. prdt.env (잠정 확정 — 열린 항목 ①: 미니멀 계승)
-ENV_FILE="$PRDT_HOME/prdt.env"
-if [ ! -f "$ENV_FILE" ]; then
-  say "2) Writing $ENV_FILE"
-  {
-    printf 'PRDT_REPO=%s\n' "$ROOT"
-    printf 'created_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf 'PRDT_HOOKS_INSTALLED=true\n'
-    printf 'PRDT_STATUSLINE_INSTALLED=false\n'
-    printf 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1\n'
-  } > "$ENV_FILE"
-  chmod 600 "$ENV_FILE"
-else
-  say "2) $ENV_FILE exists — updating PRDT_REPO only"
-  python3 - "$ENV_FILE" "$ROOT" <<'PYEOF'
-import sys
-path, repo = sys.argv[1], sys.argv[2]
-lines = [l for l in open(path).read().splitlines() if not l.startswith("PRDT_REPO=")]
-lines.insert(0, f"PRDT_REPO={repo}")
-open(path, "w").write("\n".join(lines) + "\n")
-PYEOF
+# 새 저장소를 먼저 URL로 직접 fetch — 실패하면(오프라인 등) origin을 건드리기
+# 전에 여기서 중단되므로, 재시도 시 기존 update 경로가 그대로 살아 있어요.
+if ! git -C "$ROOT" fetch --quiet "$NEW_URL" "$BRANCH" 2>/dev/null; then
+  BRANCH="main"
+  git -C "$ROOT" fetch --quiet "$NEW_URL" "$BRANCH"
 fi
 
-# 3. agents (copy — additive; pdt-*/pdtl-* untouched)
-say "3) Installing agents → $CLAUDE_DIR/agents"
-mkdir -p "$CLAUDE_DIR/agents"
-cp "$ROOT"/agents/prdt-*.md "$CLAUDE_DIR/agents/"
+git -C "$ROOT" remote set-url origin "$NEW_URL"
 
-# 4. hooks merge into ~/.claude/settings.json (idempotent: prdt entries replaced, others preserved)
-#    Also sweeps out the deleted legacy pdt-* hook set (T-316 C3a): a machine that
-#    previously ran the pre-T-293 installer still carries settings.json entries whose
-#    commands point at packages/core/scripts/hooks/<basename>.sh scripts that no longer
-#    exist — every session then fails those with command-not-found. We strip them by the
-#    repo-distributed path SUFFIX only, so other apps' and users' own hooks are untouched.
-say "4) Registering hook 5종 in $CLAUDE_DIR/settings.json (+ legacy pdt-* cleanup)"
-SETTINGS="$CLAUDE_DIR/settings.json"
-[ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
-TMP="$(mktemp)"
-jq --arg h "$PRDT_HOME/hooks/" '
-  # C3a: legacy pdt-* hook basenames this repo distributed (deleted in T-293/T-311).
-  (["post-edit-format.sh","post-compact-doctrine.sh","stop-verify.sh",
-    "post-delegate-state-write.sh","pre-delegate-task-check.sh","pre-delegate-ctx-lang.sh",
-    "pre-chunking-warn.sh","post-bash-strip-cost.sh","pre-frontmatter-lint.sh",
-    "post-ticket-status-verify.sh","pre-git-posture.sh","session-start-doctrine.sh",
-    "pre-doctrine-guard.sh","pre-phase-gate-guard.sh","prompt-gate-inject.sh",
-    "session-start-po-state-migrate.sh","pre-po-state-shape-guard.sh",
-    "post-po-state-shape-guard.sh"]) as $legacy |
-  def isLegacy(cmd): (cmd) as $c | any($legacy[]; . as $b | $c | endswith("/scripts/hooks/" + $b));
-  def stripLegacy(arr): (arr // []) | map(
-    .hooks = ((.hooks // []) | map(select(isLegacy(.command // "") | not)))
-  ) | map(select((.hooks | length) > 0));
-  def strip(ev): (.hooks[ev] // []) | map(
-    .hooks = ((.hooks // []) | map(select((.command // "") | (startswith($h) or startswith("\"" + $h)) | not)))
-  ) | map(select((.hooks | length) > 0));
-  .hooks = (.hooks // {}) |
-  # sweep legacy pdt-* out of EVERY event array (incl. PreToolUse/PostCompact/Stop
-  # that prdt never re-adds), then drop any now-empty event key.
-  .hooks = (.hooks | with_entries(.value = stripLegacy(.value)) | with_entries(select((.value | length) > 0))) |
-  # T-358: prdt-overrides-inject.sh rides the SAME matcher as prdt-session-start.sh
-  # on both events, but as its OWN hook command entry -- never merged into the
-  # other additionalContext string -- so a large main payload persist/
-  # truncation event can never carry the (small) overrides output down with it.
-  .hooks.SessionStart = (strip("SessionStart") + [
-    {matcher: "startup|resume|clear",
-     hooks: [{type: "command", command: ("\"" + $h + "prdt-session-start.sh" + "\"")},
-             {type: "command", command: ("\"" + $h + "prdt-overrides-inject.sh" + "\"")}]},
-    {matcher: "compact",
-     hooks: [{type: "command", command: ("\"" + $h + "prdt-post-compact.sh" + "\"")}]}
-  ]) |
-  .hooks.SubagentStart = (strip("SubagentStart") + [
-    {matcher: "^prdt-",
-     hooks: [{type: "command", command: ("\"" + $h + "prdt-session-start.sh" + "\"")},
-             {type: "command", command: ("\"" + $h + "prdt-overrides-inject.sh" + "\"")}]}
-  ]) |
-  .hooks.SubagentStop = (strip("SubagentStop") + [
-    {matcher: "^prdt-",
-     hooks: [{type: "command", command: ("\"" + $h + "prdt-post-dispatch.sh" + "\"")}]}
-  ]) |
-  .hooks.PostToolUse = (strip("PostToolUse") + [
-    {matcher: "Agent",
-     hooks: [{type: "command", command: ("\"" + $h + "prdt-post-dispatch.sh" + "\"")}]}
-  ]) |
-  # T-336 stage guard: deterministic per-prompt po-state line + deploy tripwire
-  # (UserPromptSubmit takes no matcher).
-  .hooks.UserPromptSubmit = (strip("UserPromptSubmit") + [
-    {hooks: [{type: "command", command: ("\"" + $h + "prdt-user-prompt.sh" + "\"")}]}
-  ]) |
-  # C3a: drop the legacy statusline (deleted statusline-productune.sh). The prdt
-  # statusline (§6, default-on) is a different basename and is never matched here;
-  # a user custom statusLine is preserved (only the repo-distributed suffix matches).
-  (if ((.statusLine.command // "")
-        | (endswith("/scripts/statusline-productune.sh")
-           or endswith("/scripts/statusline-productune.sh\"")))
-   then del(.statusLine) else . end)
-' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
-
-# 5. PATH symlink
-if [ -d "$HOME/.local/bin" ] || mkdir -p "$HOME/.local/bin" 2>/dev/null; then
-  ln -sf "$PRDT_HOME/bin/prdt" "$HOME/.local/bin/prdt"
-  say "5) Symlinked ~/.local/bin/prdt (ensure ~/.local/bin is on PATH)"
-fi
-
-# 6. statusline — default-on, but never clobber an existing statusLine (ours or a
-#    custom one); --statusline forces re-registration, --no-statusline opts out.
-CURRENT_STATUSLINE="$(jq -r '.statusLine.command // empty' "$SETTINGS")"
-REGISTER_STATUSLINE=false
-case "$STATUSLINE_MODE" in
-  off) say "6) Statusline NOT registered (--no-statusline)" ;;
-  on) REGISTER_STATUSLINE=true ;;
-  *)
-    if [ -z "$CURRENT_STATUSLINE" ]; then
-      REGISTER_STATUSLINE=true
-    else
-      say "6) Statusline NOT registered (existing statusLine preserved) — force with: install.sh --statusline"
-    fi
-    ;;
-esac
-
-if [ "$REGISTER_STATUSLINE" = true ]; then
-  say "6) Registering statusline"
-  TMP="$(mktemp)"
-  jq --arg cmd "$PRDT_HOME/bin/statusline-prdt.sh" \
-     '.statusLine = {type: "command", command: ("\"" + $cmd + "\"")}' "$SETTINGS" > "$TMP" && mv "$TMP" "$SETTINGS"
-  python3 - "$ENV_FILE" <<'PYEOF'
-import sys
-path = sys.argv[1]
-s = open(path).read().replace("PRDT_STATUSLINE_INSTALLED=false", "PRDT_STATUSLINE_INSTALLED=true")
-open(path, "w").write(s)
-PYEOF
-fi
-
-say "prdt install done."
+# 여기서부터는 이 파일 자신이 새 내용으로 대체되므로 exec 래퍼에서 실행.
+exec bash -c '
+  set -euo pipefail
+  ROOT="$1"; BRANCH="$2"
+  git -C "$ROOT" checkout -q -B "$BRANCH" FETCH_HEAD
+  git -C "$ROOT" branch --set-upstream-to="origin/$BRANCH" "$BRANCH" >/dev/null 2>&1 || true
+  echo "전환 완료 → productune-code/$BRANCH ($(git -C "$ROOT" rev-parse --short HEAD))"
+  exec bash "$ROOT/packages/core/scripts/install.sh" "${@:3}"
+' _ "$ROOT" "$BRANCH" "$@"
